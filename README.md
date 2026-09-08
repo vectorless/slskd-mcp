@@ -48,10 +48,10 @@ FLAC" is the question that usually matters.
 | `searches` | read | list recent searches |
 | `browse` | read | browse a user's shares |
 | `downloads` | read | current transfer state |
-| `wishlist_add` | read | add a standing search |
+| `wishlist_add` | write | add a standing search |
 | `wishlist_list` | read | show the wishlist |
-| `wishlist_remove` | read | drop an entry |
-| `wishlist_check` | read | run all entries, report only what's new |
+| `wishlist_remove` | write | drop an entry |
+| `wishlist_check` | write | run all entries, report only what's new |
 | `download_status` | read | one transfer: state, progress, queue position |
 | `download` | **write** | queue a transfer — **disabled by default** |
 | `cancel_download` | **write** | stop a transfer — always available, see below |
@@ -144,8 +144,7 @@ Only Linux is *actually* tested.
 
 ## Notes on slskd's OpenAPI spec
 
-Four findings from an earlier attempt to generate a client, recorded so they don't cost anyone
-else the time they cost here:
+Six findings, recorded so they don't cost anyone else the time they cost here:
 
 1. **The spec is at `/swagger/v0/swagger.json`** — `v0`, not `v1`. Enable the `swagger` feature.
 2. **14 paths contain a literal `v{version}` placeholder** — the ASP.NET route template isn't
