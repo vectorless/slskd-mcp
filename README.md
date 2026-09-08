@@ -52,7 +52,9 @@ FLAC" is the question that usually matters.
 | `wishlist_list` | read | show the wishlist |
 | `wishlist_remove` | read | drop an entry |
 | `wishlist_check` | read | run all entries, report only what's new |
+| `download_status` | read | one transfer: state, progress, queue position |
 | `download` | **write** | queue a transfer — **disabled by default** |
+| `cancel_download` | **write** | stop a transfer — always available, see below |
 
 ### Downloads are gated on purpose
 
@@ -62,6 +64,9 @@ started with `--allow-downloads` (or `SLSKD_ALLOW_DOWNLOADS=1`).
 
 Handing an agent the ability to pull files is a decision someone should make deliberately, not
 a default nobody reviewed.
+
+`cancel_download` is deliberately *not* gated. It only ever reduces activity, and a stop button
+you can't reach is not a stop button.
 
 ## Usage
 
@@ -108,7 +113,7 @@ Wishlist state lives at `~/slskd/wishlist.json`, overridable with `SLSKD_WISHLIS
 
 ```
 uv sync
-uv run pytest        # 32 tests, no network required
+uv run pytest        # 36 tests, no network required
 ```
 
 Requires Python 3.11+. Two dependencies: [`mcp`](https://pypi.org/project/mcp/) and `httpx2`,
@@ -137,6 +142,13 @@ else the time they cost here:
 3. **`components.securitySchemes` is empty**, so a generated client won't attach `X-API-Key`
    or a bearer token.
 4. **The search endpoints declare no response schemas at all.**
+5. **`POST transfers/downloads/{username}` is `deprecated: true`** — summary reads "(Obsolete)".
+   The live replacement is `POST transfers/downloads/batches`, which also carries a `searchId`
+   linking a download back to the search that produced it. This project uses the batch form.
+6. **That batch endpoint returns `200` when every download *failed*** — `201` is full success
+   and `207` is partial. A client that treats 2xx as success reports the exact opposite of what
+   happened, so `enqueue` returns the status alongside the body and the caller reads
+   `failures`.
 
 None of this is a complaint about slskd, which is excellent; it's just what's true of the
 generated spec. It is why `client.py` is hand-written: fighting the generator cost more than

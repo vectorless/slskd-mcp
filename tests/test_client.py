@@ -1,5 +1,7 @@
 """Client tests against a mock transport -- no slskd, no network."""
 
+import json
+
 import httpx2 as httpx
 import pytest
 
@@ -89,16 +91,64 @@ async def test_unreachable_host_is_a_slskderror_not_a_transport_error():
         assert await c.health() is False
 
 
-@pytest.mark.anyio
-async def test_enqueue_posts_the_file_list_to_the_user_path():
-    seen: list = []
-    async with make(record(seen, {})) as c:
-        await c.enqueue("someone", [{"filename": "a.flac", "size": 1}])
-    assert str(seen[0].url) == "http://slskd.test/api/v0/transfers/downloads/someone"
-    assert seen[0].method == "POST"
-
-
 def test_from_env_requires_a_key(monkeypatch):
     monkeypatch.delenv("SLSKD_API_KEY", raising=False)
     with pytest.raises(SlskdError):
         Client.from_env()
+
+
+@pytest.mark.anyio
+async def test_enqueue_uses_the_batch_endpoint_not_the_deprecated_one():
+    """POST transfers/downloads/{username} is marked deprecated in the spec."""
+    seen: list = []
+    async with make(record(seen, {"batch": {"transfers": []}, "failures": []})) as c:
+        await c.enqueue("someone", [{"filename": "a.flac", "size": 1}])
+    assert str(seen[0].url) == "http://slskd.test/api/v0/transfers/downloads/batches"
+    body = json.loads(seen[0].content)
+    assert body["username"] == "someone"
+    assert body["files"] == [{"filename": "a.flac", "size": 1}]
+    assert "searchId" not in body  # omitted when not supplied
+
+
+@pytest.mark.anyio
+async def test_enqueue_carries_search_id_and_destination_when_given():
+    seen: list = []
+    async with make(record(seen, {})) as c:
+        await c.enqueue("u", [], search_id="s-1", destination="/tmp/x")
+    body = json.loads(seen[0].content)
+    assert body["searchId"] == "s-1"
+    assert body["options"] == {"destination": "/tmp/x"}
+
+
+@pytest.mark.anyio
+async def test_enqueue_returns_the_status_because_200_means_total_failure():
+    """The batch endpoint uses 200 for 'everything failed' and 201 for success."""
+    payload = {"batch": {"transfers": []}, "failures": [{"filename": "a", "message": "no"}]}
+    async with make(record([], payload, status=200)) as c:
+        status, body = await c.enqueue("u", [{"filename": "a", "size": 1}])
+    assert status == 200
+    assert body["failures"][0]["message"] == "no"
+
+
+@pytest.mark.anyio
+async def test_cancel_sends_remove_as_a_lowercase_query_flag():
+    seen: list = []
+    async with make(record(seen, status=204, text="")) as c:
+        await c.cancel_download("u", "t-1", remove=True)
+    assert seen[0].url.path == "/api/v0/transfers/downloads/u/t-1"
+    assert seen[0].url.params["remove"] == "true"
+    assert seen[0].method == "DELETE"
+
+    seen.clear()
+    async with make(record(seen, status=204, text="")) as c:
+        await c.cancel_download("u", "t-1")
+    assert seen[0].url.params["remove"] == "false"
+
+
+@pytest.mark.anyio
+async def test_download_status_hits_the_single_transfer_path():
+    seen: list = []
+    async with make(record(seen, {"id": "t-1", "placeInQueue": 4})) as c:
+        t = await c.download_status("u", "t-1")
+    assert str(seen[0].url) == "http://slskd.test/api/v0/transfers/downloads/u/t-1"
+    assert t["placeInQueue"] == 4

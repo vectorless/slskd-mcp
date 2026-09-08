@@ -74,9 +74,31 @@ class Client:
         """Always ``v0``. The spec's ``v{version}`` placeholder is a generation bug."""
         return f"{self.base}/api/v0/{path.lstrip('/')}"
 
-    async def _send(self, method: str, path: str, body: Any = None) -> Any:
+    async def _send(
+        self,
+        method: str,
+        path: str,
+        body: Any = None,
+        params: dict | None = None,
+    ) -> Any:
+        return (await self._send_full(method, path, body, params))[1]
+
+    async def _send_full(
+        self,
+        method: str,
+        path: str,
+        body: Any = None,
+        params: dict | None = None,
+    ) -> tuple[int, Any]:
+        """Like `_send`, but also hands back the status code.
+
+        The batch enqueue endpoint distinguishes total failure (200) from full
+        success (201) and partial success (207), so some callers need it.
+        """
         try:
-            r = await self._http.request(method, self._url(path), json=body)
+            r = await self._http.request(
+                method, self._url(path), json=body, params=params
+            )
         except httpx.HTTPError as e:
             raise SlskdError(f"could not reach slskd at {self.base}: {e}") from e
 
@@ -87,9 +109,9 @@ class Client:
             )
         # Several endpoints answer 204 with an empty body.
         if not text.strip():
-            return None
+            return r.status_code, None
         try:
-            return json.loads(text)
+            return r.status_code, json.loads(text)
         except ValueError as e:
             raise SlskdError(f"could not decode response: {e}", r.status_code) from e
 
@@ -131,6 +153,46 @@ class Client:
     async def downloads(self) -> Any:
         return await self._send("GET", "transfers/downloads")
 
-    async def enqueue(self, username: str, files: list[dict]) -> Any:
-        """Queue files from one user. The only method that changes the world."""
-        return await self._send("POST", f"transfers/downloads/{username}", files)
+    async def downloads_for(self, username: str) -> Any:
+        return await self._send("GET", f"transfers/downloads/{username}")
+
+    async def download_status(self, username: str, id: str) -> dict:
+        """One transfer, including `placeInQueue`."""
+        return await self._send("GET", f"transfers/downloads/{username}/{id}")
+
+    async def enqueue(
+        self,
+        username: str,
+        files: list[dict],
+        search_id: str | None = None,
+        destination: str | None = None,
+    ) -> tuple[int, Any]:
+        """Queue files from one user. The only method that creates network activity.
+
+        Uses the batch endpoint. `POST transfers/downloads/{username}` is marked
+        deprecated in the spec, and the batch form additionally carries a
+        `searchId` linking a download back to the search that found it.
+
+        Returns `(status, body)` because the status is load-bearing here and
+        counter-intuitive: **200 means every file failed**, 201 means all
+        succeeded, 207 means some of each. The body's `failures` list says why.
+        """
+        body: dict[str, Any] = {"username": username, "files": files}
+        if search_id:
+            body["searchId"] = search_id
+        if destination:
+            body["options"] = {"destination": destination}
+        return await self._send_full("POST", "transfers/downloads/batches", body)
+
+    async def cancel_download(
+        self, username: str, id: str, remove: bool = False
+    ) -> None:
+        """Cancel a transfer in flight. `remove` also drops it from the list."""
+        await self._send(
+            "DELETE",
+            f"transfers/downloads/{username}/{id}",
+            params={"remove": str(bool(remove)).lower()},
+        )
+
+    async def clear_completed_downloads(self) -> None:
+        await self._send("DELETE", "transfers/downloads/all/completed")

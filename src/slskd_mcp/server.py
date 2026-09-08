@@ -378,13 +378,17 @@ async def downloads() -> str:
         "search_results."
     )
 )
-async def download(username: str, filename: str, size: int) -> str:
+async def download(
+    username: str, filename: str, size: int, search_id: str = ""
+) -> str:
     """Queue a download. Gated.
 
     Args:
         username: Soulseek username holding the file
         filename: Full remote path, exactly as returned by `search_results`
         size: File size in bytes, exactly as returned by `search_results`
+        search_id: Optional id of the search this file came from, recorded
+            against the batch so a download can be traced back to its search
     """
     if not _allow_downloads:
         return (
@@ -393,10 +397,90 @@ async def download(username: str, filename: str, size: int) -> str:
             "wants to permit this."
         )
     try:
-        await client().enqueue(username, [{"filename": filename, "size": size}])
+        status, body = await client().enqueue(
+            username, [{"filename": filename, "size": size}], search_id or None
+        )
     except SlskdError as e:
         return f"Enqueue failed: {e}"
-    return f"Queued: {filename}\nfrom {username}\nTrack it with `downloads`."
+
+    # 200 from this endpoint means *everything failed*. Trust the body.
+    failures = (body or {}).get("failures") or []
+    if failures:
+        why = "; ".join(f.get("message", "?") for f in failures[:3])
+        return f"Rejected by {username}: {why}"
+    if status == 200:
+        return f"{username} accepted nothing and gave no reason. Nothing queued."
+
+    batch = (body or {}).get("batch") or {}
+    transfers = batch.get("transfers") or []
+    tid = transfers[0].get("id") if transfers else None
+    out = [f"Queued: {filename}", f"from {username}"]
+    if tid:
+        out.append(f"transfer id: {tid}")
+    out.append("Track it with `download_status`, or stop it with `cancel_download`.")
+    return "\n".join(out)
+
+
+@mcp.tool(
+    description=(
+        "Check one download: state, percent complete and position in the peer's "
+        "queue. Needs the username and transfer id from `download` or `downloads`."
+    )
+)
+async def download_status(username: str, id: str) -> str:
+    """Progress and queue position for a single transfer.
+
+    Args:
+        username: Soulseek username the file is coming from
+        id: Transfer id, as returned by `download` or `downloads`
+    """
+    try:
+        t = await client().download_status(username, id)
+    except SlskdError as e:
+        return f"Failed: {e}"
+    if not t:
+        return f"No download {id} from {username}."
+
+    bits = [f"{t.get('filename', '?')}", f"state: {t.get('state', '?')}"]
+    pct = t.get("percentComplete")
+    if pct is not None:
+        bits.append(
+            f"{float(pct):.1f}% of {size_human(t.get('size'))}"
+            f" ({size_human(t.get('bytesTransferred'))} so far)"
+        )
+    place = t.get("placeInQueue")
+    if place:
+        bits.append(f"queue position: {place}")
+    speed = t.get("averageSpeed")
+    if speed:
+        bits.append(f"{int(speed) // 1024}kb/s")
+    if t.get("exception"):
+        bits.append(f"error: {t['exception']}")
+    return "\n".join(bits)
+
+
+@mcp.tool(
+    description=(
+        "Cancel a download in progress. Always available, even when downloads "
+        "are disabled — stopping a transfer only ever reduces activity."
+    )
+)
+async def cancel_download(username: str, id: str, remove: bool = False) -> str:
+    """Stop a transfer.
+
+    Deliberately not gated behind --allow-downloads: a stop button you can't
+    reach is not a stop button.
+
+    Args:
+        username: Soulseek username the file is coming from
+        id: Transfer id, as returned by `download` or `downloads`
+        remove: Also drop it from the transfer list rather than leaving it cancelled
+    """
+    try:
+        await client().cancel_download(username, id, remove)
+    except SlskdError as e:
+        return f"Could not cancel: {e}"
+    return f"Cancelled {id} from {username}" + (" and removed it." if remove else ".")
 
 
 async def _probe() -> bool:
