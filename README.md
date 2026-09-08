@@ -108,13 +108,14 @@ Wishlist state lives at `~/slskd/wishlist.json`, overridable with `SLSKD_WISHLIS
 
 ```
 uv sync
-uv run pytest        # 23 tests, no network required
+uv run pytest        # 32 tests, no network required
 ```
 
-Requires Python 3.11+. Two dependencies: [`mcp`](https://pypi.org/project/mcp/) and
-[`slskd-api`](https://github.com/bigoulours/slskd-python-api).
+Requires Python 3.11+. Two dependencies: [`mcp`](https://pypi.org/project/mcp/) and `httpx2`,
+which `mcp` pulls in anyway — so nothing is installed that wouldn't be there regardless.
 
-Note that `mcp` 2.x renamed `FastMCP` to `MCPServer`; most tutorials still show the v1 API.
+Note that `mcp` 2.x renamed `FastMCP` to `MCPServer` and ships `httpx2` rather than `httpx`;
+most tutorials still show the v1 API.
 
 ### Platforms
 
@@ -138,8 +139,12 @@ else the time they cost here:
 4. **The search endpoints declare no response schemas at all.**
 
 None of this is a complaint about slskd, which is excellent; it's just what's true of the
-generated spec. It's also why this project uses the hand-maintained `slskd-api` library rather
-than generated bindings.
+generated spec. It is why `client.py` is hand-written: fighting the generator cost more than
+writing a hundred lines of `httpx` calls.
+
+If you want a fuller Python client — rooms, shares, conversations — use
+[`slskd-api`](https://github.com/bigoulours/slskd-python-api), which is more complete than this
+and actively maintained. It is AGPL-3.0, so it isn't used here.
 
 ## Background: why there's no browser client
 
@@ -158,7 +163,7 @@ So a browser client needs a local process holding the sockets, which is what sls
 
 ### The parked Rust client
 
-`crates/slskd-client` is a typed Rust HTTP client for the slskd API, left here because it
+`crates/slskd-client` is a typed Rust HTTP client for the same API, left here because it
 compiles for `wasm32-unknown-unknown` and so keeps a browser front-end possible if that ever
 becomes interesting. It is **parked, not planned**, and nothing in the MCP server depends on
 it. The Rust MCP server it once accompanied was replaced by this Python one and lives in git
@@ -172,12 +177,11 @@ history.
 
 ## Licence
 
-[AGPL-3.0-or-later](LICENSE).
+[MIT](LICENSE).
 
-This project depends on [`slskd-api`](https://github.com/bigoulours/slskd-python-api), which is
-AGPL-3.0, so the MCP server is AGPL too — the same licence as
-[slskd](https://github.com/slskd/slskd) itself.
+This project only *talks to* [slskd](https://github.com/slskd/slskd), which is AGPL-3.0.
+Nothing from slskd is vendored or linked — `client.py` speaks to its public HTTP API over the
+network, which is the boundary AGPL doesn't reach across.
 
-The parked Rust crate is the exception: `crates/slskd-client` was written from scratch against
-slskd's public HTTP API, contains no slskd or `slskd-api` code, and stays under
-[MIT](crates/slskd-client/LICENSE).
+That is also why the `slskd-api` package isn't used despite being the better client: it is
+AGPL, and depending on it would make this AGPL too.

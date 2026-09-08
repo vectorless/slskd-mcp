@@ -15,11 +15,10 @@ import asyncio
 import json
 import os
 import sys
-from typing import Any
 
-import slskd_api
 from mcp.server.mcpserver import MCPServer
 
+from .client import Client, SlskdError
 from .files import describe, peer_line, rank_key, size_human
 from .filter import has_label_tag, matches_format
 from .wishlist import Entry, Wishlist, now_stamp
@@ -35,8 +34,8 @@ mcp = MCPServer(
     ),
 )
 
-# Populated by main(); module-level so the tool functions can reach it.
-_client: Any = None
+# Created lazily on first use so the AsyncClient belongs to the running loop.
+_client: Client | None = None
 _allow_downloads = False
 
 # Responses trickle in, so poll rather than guessing a single sleep.
@@ -44,20 +43,11 @@ _POLL_ROUNDS = 8
 _POLL_INTERVAL = 2.0
 
 
-def client() -> Any:
+def client() -> Client:
     global _client
     if _client is None:
-        host = os.environ.get("SLSKD_URL", "http://localhost:5030")
-        key = os.environ.get("SLSKD_API_KEY")
-        if not key:
-            raise RuntimeError("SLSKD_API_KEY is not set")
-        _client = slskd_api.SlskdClient(host=host, api_key=key)
+        _client = Client.from_env()
     return _client
-
-
-async def _call(fn, *args, **kwargs):
-    """slskd_api is synchronous (requests), so keep it off the event loop."""
-    return await asyncio.to_thread(fn, *args, **kwargs)
 
 
 async def _await_responses(search_id: str) -> list[dict]:
@@ -65,10 +55,10 @@ async def _await_responses(search_id: str) -> list[dict]:
     responses: list[dict] = []
     for _ in range(_POLL_ROUNDS):
         await asyncio.sleep(_POLL_INTERVAL)
-        r = await _call(client().searches.search_responses, search_id)
+        r = await client().search_responses(search_id)
         if r:
             responses = r
-            state = await _call(client().searches.state, search_id)
+            state = await client().search(search_id)
             if "Completed" in (state.get("state") or ""):
                 break
     return responses
@@ -81,7 +71,7 @@ async def _run_query(
 
     Shared by `search_label` and the wishlist so both behave identically.
     """
-    search = await _call(client().searches.search_text, searchText=query)
+    search = await client().start_search(query)
     responses = await _await_responses(search["id"])
 
     out: list[tuple[str, list[dict]]] = []
@@ -110,8 +100,8 @@ async def search(query: str) -> str:
         query: What to search the Soulseek network for, e.g. "Planet Rhythm"
     """
     try:
-        s = await _call(client().searches.search_text, searchText=query)
-    except Exception as e:
+        s = await client().start_search(query)
+    except SlskdError as e:
         return f"Search failed: {e}"
     return (
         f"Search started.\nid: {s['id']}\nquery: {query}\n\n"
@@ -134,8 +124,8 @@ async def search_results(id: str, formats: str = "") -> str:
             "lossless" and "lossy": e.g. "flac", "flac,wav". Omit for everything.
     """
     try:
-        responses = await _call(client().searches.search_responses, id)
-    except Exception as e:
+        responses = await client().search_responses(id)
+    except SlskdError as e:
         return f"Could not fetch results: {e}"
     if not responses:
         return "No responses yet. Searches take a few seconds; try again shortly."
@@ -184,9 +174,9 @@ async def search_label(label: str, formats: str = "") -> str:
     """
     fmt = (formats or "").strip()
     try:
-        search_state = await _call(client().searches.search_text, searchText=label)
+        search_state = await client().start_search(label)
         responses = await _await_responses(search_state["id"])
-    except Exception as e:
+    except SlskdError as e:
         return f"Search failed: {e}"
 
     total = sum(len(r.get("files", [])) for r in responses)
@@ -304,7 +294,7 @@ async def wishlist_check() -> str:
     for e in list(w.entries):
         try:
             hits = await _run_query(e.query, e.label_filter, e.formats or "")
-        except Exception as err:
+        except SlskdError as err:
             report.append(f"\n{e.query}: search failed — {err}")
             continue
 
@@ -342,8 +332,8 @@ async def wishlist_check() -> str:
 async def searches() -> str:
     """All searches slskd currently knows about."""
     try:
-        items = await _call(client().searches.get_all)
-    except Exception as e:
+        items = await client().searches()
+    except SlskdError as e:
         return f"Failed: {e}"
     if not items:
         return "No searches."
@@ -363,8 +353,8 @@ async def browse(username: str) -> str:
         username: Soulseek username
     """
     try:
-        v = await _call(client().users.browse, username)
-    except Exception as e:
+        v = await client().browse(username)
+    except SlskdError as e:
         return f"Browse failed: {e}"
     return json.dumps(v, indent=2)[:4000]
 
@@ -373,7 +363,7 @@ async def browse(username: str) -> str:
 async def downloads() -> str:
     """Current download state."""
     try:
-        v = await _call(client().transfers.get_all_downloads)
+        v = await client().downloads()
     except Exception as e:
         return f"Failed: {e}"
     if not v:
@@ -403,14 +393,21 @@ async def download(username: str, filename: str, size: int) -> str:
             "wants to permit this."
         )
     try:
-        await _call(
-            client().transfers.enqueue,
-            username=username,
-            files=[{"filename": filename, "size": size}],
-        )
-    except Exception as e:
+        await client().enqueue(username, [{"filename": filename, "size": size}])
+    except SlskdError as e:
         return f"Enqueue failed: {e}"
     return f"Queued: {filename}\nfrom {username}\nTrack it with `downloads`."
+
+
+async def _probe() -> bool:
+    """Startup liveness check; closes the client so main() starts clean."""
+    c = client()
+    try:
+        return await c.health()
+    finally:
+        global _client
+        await c.aclose()
+        _client = None
 
 
 def main() -> None:
@@ -429,12 +426,13 @@ def main() -> None:
 
     # Fail loudly at startup rather than on the first tool call.
     try:
-        client().application.state()
-    except Exception as e:
-        print(
-            f"warning: could not reach slskd ({e}); tools will fail until it is up",
-            file=sys.stderr,
-        )
+        if not asyncio.run(_probe()):
+            print(
+                "warning: slskd did not answer /health; tools will fail until it is up",
+                file=sys.stderr,
+            )
+    except SlskdError as e:
+        print(f"warning: {e}", file=sys.stderr)
 
     state = "ENABLED" if _allow_downloads else "disabled"
     print(f"slskd-mcp starting (downloads {state})", file=sys.stderr)

@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "MCP server for slskd — search the Soulseek network from an AI agent, with record-label filtering and a wishlist"
 readme = "README.md"
 requires-python = ">=3.11"
-license = "AGPL-3.0-or-later"
+license = "MIT"
 keywords = ["mcp", "slskd", "soulseek", "music"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -13,7 +13,7 @@ classifiers = [
 ]
 dependencies = [
     "mcp>=2.0",
-    "slskd-api>=0.2.4",
+    "httpx2>=2.5.0",
 ]
 
 [project.urls]
