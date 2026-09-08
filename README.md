@@ -146,4 +146,8 @@ dependencies and compiles for `wasm32`, so it stays available if that ever chang
 
 ## Licence
 
-Not yet chosen. Until one is added, no permissions are granted beyond reading the code.
+[MIT](LICENSE).
+
+Note that this project only *talks to* [slskd](https://github.com/slskd/slskd), which is
+AGPL-3.0. Nothing from slskd is vendored or linked here — `slskd-client` is an independent
+HTTP client speaking to its public API over the network.

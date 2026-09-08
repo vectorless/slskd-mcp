@@ -2,6 +2,7 @@
 name = "slskd-mcp"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "MCP server giving AI agents structured access to the Soulseek network via slskd"
 
 [dependencies]
