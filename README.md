@@ -11,11 +11,6 @@ Searching Soulseek by hand is fine. Searching it *systematically* — say, worki
 of three hundred record labels and asking which have anything shared in lossless — is exactly
 the sort of tedious, repetitive lookup an agent should do for you. That's what this is for.
 
-Two crates:
-
-- **`slskd-mcp`** — the MCP server. 11 tools.
-- **`slskd-client`** — a small typed HTTP client for the slskd API, usable on its own.
-
 ## What makes it more than an API wrapper
 
 **A label filter that actually works.** Soulseek search is a plain substring match over the
@@ -33,7 +28,7 @@ label filter:    29 responders,   846 files
 ```
 
 Matching uses a normalised form (lowercase, alphanumeric only), so `[planet rhythm ]`,
-`[PLANET-RHYTHM]` and `[Planet Rhythm Records]` all match while `[Strictly Rhythm]` does not.
+`[PLANET-RHYTHM]` and `[Planet Rhythm 2025]` all match while `[Strictly Rhythm]` does not.
 
 **A wishlist that stays quiet.** Standing searches re-run and report *only* results not seen
 before. Soulseek is a live network of people's hard drives — the record you want may simply not
@@ -74,9 +69,25 @@ a default nobody reviewed.
 export SLSKD_URL=http://localhost:5030
 export SLSKD_API_KEY=…            # from slskd.yml → web.authentication.api_keys
 
-slskd-mcp                         # stdio MCP server, downloads disabled
+uvx --from . slskd-mcp            # stdio MCP server, downloads disabled
 slskd-mcp --allow-downloads       # opt in to queuing transfers
-slskd-mcp --wishlist-run          # cron mode: prints new results, silent otherwise
+slskd-mcp --wishlist-run          # scheduled mode: prints new results, silent otherwise
+```
+
+As an MCP server entry:
+
+```json
+{
+  "mcpServers": {
+    "slskd": {
+      "command": "slskd-mcp",
+      "env": {
+        "SLSKD_URL": "http://localhost:5030",
+        "SLSKD_API_KEY": "…"
+      }
+    }
+  }
+}
 ```
 
 An API key in slskd's `slskd.yml`:
@@ -93,31 +104,30 @@ web:
 
 Wishlist state lives at `~/slskd/wishlist.json`, overridable with `SLSKD_WISHLIST`.
 
-## Build
+## Development
 
 ```
-cargo build
-cargo test          # 15 tests, no network required
+uv sync
+uv run pytest        # 23 tests, no network required
 ```
 
-`reqwest` uses `rustls-tls` rather than native TLS — no OpenSSL, no `pkg-config`, no system
-dependencies. Deliberate; please don't switch it back.
+Requires Python 3.11+. Two dependencies: [`mcp`](https://pypi.org/project/mcp/) and
+[`slskd-api`](https://github.com/bigoulours/slskd-python-api).
+
+Note that `mcp` 2.x renamed `FastMCP` to `MCPServer`; most tutorials still show the v1 API.
 
 ### Platforms
 
-Pure Rust, no platform-specific APIs — Linux, macOS and Windows should all build natively.
-Paths are handled with `PathBuf`, and the home directory is resolved from `HOME` or
-`USERPROFILE` so the wishlist lands somewhere sensible on Windows.
+Pure Python, no platform-specific APIs. The home directory is resolved from `HOME` or
+`USERPROFILE`, so the wishlist lands somewhere sensible on Windows, and path splitting handles
+both separators — Soulseek paths use backslashes regardless of the sharing peer's OS.
 
-Two honest caveats: only Linux is *actually* tested, and cross-*compiling* needs a C
-toolchain for the target because rustls's `ring` backend builds C. Native builds don't.
-
-`slskd-client` also compiles for `wasm32-unknown-unknown` (verified), which keeps a browser
-front-end possible.
+Only Linux is *actually* tested.
 
 ## Notes on slskd's OpenAPI spec
 
-Four findings, recorded so they don't cost anyone else the time they cost here:
+Four findings from an earlier attempt to generate a client, recorded so they don't cost anyone
+else the time they cost here:
 
 1. **The spec is at `/swagger/v0/swagger.json`** — `v0`, not `v1`. Enable the `swagger` feature.
 2. **14 paths contain a literal `v{version}` placeholder** — the ASP.NET route template isn't
@@ -127,11 +137,9 @@ Four findings, recorded so they don't cost anyone else the time they cost here:
    or a bearer token.
 4. **The search endpoints declare no response schemas at all.**
 
-The types here were therefore modelled from slskd's own C# source
-(`src/slskd/Search/Types/{Search,Response}.cs`) and then verified against live payloads —
-every field deserialised without error. Hand-writing the client was less work than fighting
-codegen. None of this is a complaint about slskd, which is excellent; it's just what's true of
-the generated spec.
+None of this is a complaint about slskd, which is excellent; it's just what's true of the
+generated spec. It's also why this project uses the hand-maintained `slskd-api` library rather
+than generated bindings.
 
 ## Background: why there's no browser client
 
@@ -147,8 +155,14 @@ The peer half is decisive. Browsers cannot accept inbound connections, and the e
 population speaks TCP rather than WebRTC — a WebRTC mesh would be a new network with no users.
 
 So a browser client needs a local process holding the sockets, which is what slskd already is.
-A web front-end is **parked**, not planned; `slskd-client` is a plain HTTP client with no MCP
-dependencies and compiles for `wasm32`, so it stays available if that ever changes.
+
+### The parked Rust client
+
+`crates/slskd-client` is a typed Rust HTTP client for the slskd API, left here because it
+compiles for `wasm32-unknown-unknown` and so keeps a browser front-end possible if that ever
+becomes interesting. It is **parked, not planned**, and nothing in the MCP server depends on
+it. The Rust MCP server it once accompanied was replaced by this Python one and lives in git
+history.
 
 ## Roadmap
 
@@ -158,8 +172,12 @@ dependencies and compiles for `wasm32`, so it stays available if that ever chang
 
 ## Licence
 
-[MIT](LICENSE).
+[AGPL-3.0-or-later](LICENSE).
 
-Note that this project only *talks to* [slskd](https://github.com/slskd/slskd), which is
-AGPL-3.0. Nothing from slskd is vendored or linked here — `slskd-client` is an independent
-HTTP client speaking to its public API over the network.
+This project depends on [`slskd-api`](https://github.com/bigoulours/slskd-python-api), which is
+AGPL-3.0, so the MCP server is AGPL too — the same licence as
+[slskd](https://github.com/slskd/slskd) itself.
+
+The parked Rust crate is the exception: `crates/slskd-client` was written from scratch against
+slskd's public HTTP API, contains no slskd or `slskd-api` code, and stays under
+[MIT](crates/slskd-client/LICENSE).
