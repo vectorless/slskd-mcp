@@ -2,7 +2,7 @@
 name = "slskd-mcp"
 version = "0.1.0"
 edition = "2021"
-description = "MCP server exposing a local slskd instance to AI agents"
+description = "MCP server giving AI agents structured access to the Soulseek network via slskd"
 
 [dependencies]
 slskd-client = { path = "../slskd-client" }

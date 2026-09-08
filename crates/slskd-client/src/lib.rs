@@ -1,11 +1,12 @@
 //! A small typed client for the slskd HTTP API.
 //!
-//! Deliberately hand-written rather than generated: slskd's OpenAPI spec has two
+//! Deliberately hand-written rather than generated: slskd's OpenAPI spec has three
 //! defects that break codegen — 14 paths carry a literal `v{version}` placeholder,
-//! and `components.securitySchemes` is empty so auth is never wired up.
+//! `components.securitySchemes` is empty so auth is never wired up, and the search
+//! endpoints declare no response schemas at all.
 //!
-//! No UI or MCP dependencies here. This crate is consumed by both `slskd-mcp`
-//! and (later) the WASM front-end.
+//! No UI or MCP dependencies, and it compiles for `wasm32` — so it stays usable
+//! outside `slskd-mcp` if a front-end is ever wanted. That is parked, not planned.
 
 pub mod filter;
 pub mod types;
