@@ -46,8 +46,14 @@ pub fn path() -> PathBuf {
         })
 }
 
+/// Home directory across platforms: `HOME` on Unix and macOS, `USERPROFILE` on
+/// Windows. Falls back to the working directory rather than failing, so the
+/// wishlist still works somewhere sensible.
 fn dirs_home() -> PathBuf {
-    std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("."))
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 impl Wishlist {

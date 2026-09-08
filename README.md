@@ -103,6 +103,18 @@ cargo test          # 15 tests, no network required
 `reqwest` uses `rustls-tls` rather than native TLS — no OpenSSL, no `pkg-config`, no system
 dependencies. Deliberate; please don't switch it back.
 
+### Platforms
+
+Pure Rust, no platform-specific APIs — Linux, macOS and Windows should all build natively.
+Paths are handled with `PathBuf`, and the home directory is resolved from `HOME` or
+`USERPROFILE` so the wishlist lands somewhere sensible on Windows.
+
+Two honest caveats: only Linux is *actually* tested, and cross-*compiling* needs a C
+toolchain for the target because rustls's `ring` backend builds C. Native builds don't.
+
+`slskd-client` also compiles for `wasm32-unknown-unknown` (verified), which keeps a browser
+front-end possible.
+
 ## Notes on slskd's OpenAPI spec
 
 Four findings, recorded so they don't cost anyone else the time they cost here:
