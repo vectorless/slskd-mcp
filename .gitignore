@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+
+# Local runtime state — never publish
+*.env
+.env
+wishlist.json
+slskd.yml
+appdata/
