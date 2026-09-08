@@ -17,6 +17,7 @@ import os
 import sys
 
 from mcp.server.mcpserver import MCPServer
+from mcp.types import ToolAnnotations
 
 from .client import Client, SlskdError
 from .files import describe, peer_line, rank_key, size_human
@@ -87,7 +88,44 @@ async def _run_query(
     return out
 
 
+# Without annotations an MCP client must assume every tool is dangerous and
+# prompt before each call, which makes routine searching unusable. These say
+# plainly which tools only look and which change something.
+#
+# open_world_hint is true throughout: this talks to a live P2P network of
+# strangers' machines, so results are not a closed, predictable set.
+READS = ToolAnnotations(read_only_hint=True, open_world_hint=True)
+LOCAL_READS = ToolAnnotations(read_only_hint=True, open_world_hint=False)
+# Wishlist edits touch a local JSON file, nothing on the network. Adding is
+# idempotent because an equivalent entry is rejected as a duplicate.
+LOCAL_ADD = ToolAnnotations(
+    read_only_hint=False, destructive_hint=False,
+    idempotent_hint=True, open_world_hint=False,
+)
+LOCAL_REMOVE = ToolAnnotations(
+    read_only_hint=False, destructive_hint=True,
+    idempotent_hint=False, open_world_hint=False,
+)
+# wishlist_check searches the network AND records what it reported, so it is
+# not read-only: running it twice deliberately gives different answers.
+SCANS = ToolAnnotations(
+    read_only_hint=False, destructive_hint=False,
+    idempotent_hint=False, open_world_hint=True,
+)
+WRITES = ToolAnnotations(
+    read_only_hint=False, destructive_hint=False,
+    idempotent_hint=False, open_world_hint=True,
+)
+# Cancelling is destructive in the sense that it ends something in flight, but
+# it only ever reduces activity.
+STOPS = ToolAnnotations(
+    read_only_hint=False, destructive_hint=True,
+    idempotent_hint=True, open_world_hint=True,
+)
+
+
 @mcp.tool(
+    annotations=READS,
     description=(
         "Search the Soulseek network. Returns a search id; results arrive "
         "asynchronously, so call search_results a few seconds later."
@@ -110,6 +148,7 @@ async def search(query: str) -> str:
 
 
 @mcp.tool(
+    annotations=READS,
     description=(
         "Get results for a search id. Lists peers and their files with size and "
         "bitrate. Use the exact filename and size when downloading."
@@ -158,6 +197,7 @@ async def search_results(id: str, formats: str = "") -> str:
 
 
 @mcp.tool(
+    annotations=READS,
     description=(
         "Find releases on a specific record label. Runs a search, waits for "
         "responses, then keeps only files whose folder carries the label as a "
@@ -215,6 +255,7 @@ async def search_label(label: str, formats: str = "") -> str:
 
 
 @mcp.tool(
+    annotations=LOCAL_ADD,
     description=(
         "Add a standing search to the wishlist. Wishlist entries are re-run on a "
         "schedule and only NEW results are reported, so you hear about a record "
@@ -243,7 +284,8 @@ async def wishlist_add(
     return f'Added "{query}" to the wishlist{extra}. {len(w.entries)} entr(ies) total.'
 
 
-@mcp.tool(description="List standing wishlist searches")
+@mcp.tool(
+    annotations=LOCAL_READS,description="List standing wishlist searches")
 async def wishlist_list() -> str:
     """Show the wishlist."""
     w = Wishlist.load()
@@ -259,7 +301,8 @@ async def wishlist_list() -> str:
     return "\n".join(out)
 
 
-@mcp.tool(description="Remove a wishlist entry by its 1-based index from wishlist_list")
+@mcp.tool(
+    annotations=LOCAL_REMOVE,description="Remove a wishlist entry by its 1-based index from wishlist_list")
 async def wishlist_remove(index: int) -> str:
     """Remove an entry.
 
@@ -278,6 +321,7 @@ async def wishlist_remove(index: int) -> str:
 
 
 @mcp.tool(
+    annotations=SCANS,
     description=(
         "Run all wishlist searches now and report only results not seen before. "
         "Takes ~20s per entry because Soulseek results arrive asynchronously."
@@ -328,7 +372,8 @@ async def wishlist_check() -> str:
     return f"{total_new} new result(s) across {len(w.entries)} entr(ies).\n{body}"
 
 
-@mcp.tool(description="List recent searches and their state")
+@mcp.tool(
+    annotations=READS,description="List recent searches and their state")
 async def searches() -> str:
     """All searches slskd currently knows about."""
     try:
@@ -345,7 +390,8 @@ async def searches() -> str:
     )
 
 
-@mcp.tool(description="Browse everything a Soulseek user is sharing")
+@mcp.tool(
+    annotations=READS,description="Browse everything a Soulseek user is sharing")
 async def browse(username: str) -> str:
     """Browse a user's shared files.
 
@@ -359,7 +405,8 @@ async def browse(username: str) -> str:
     return json.dumps(v, indent=2)[:4000]
 
 
-@mcp.tool(description="Show current downloads and their progress")
+@mcp.tool(
+    annotations=READS,description="Show current downloads and their progress")
 async def downloads() -> str:
     """Current download state."""
     try:
@@ -372,6 +419,7 @@ async def downloads() -> str:
 
 
 @mcp.tool(
+    annotations=WRITES,
     description=(
         "Queue a file for download. Requires the server to have been started "
         "with downloads enabled. Use the exact filename and size from "
@@ -422,6 +470,7 @@ async def download(
 
 
 @mcp.tool(
+    annotations=READS,
     description=(
         "Check one download: state, percent complete and position in the peer's "
         "queue. Needs the username and transfer id from `download` or `downloads`."
@@ -460,6 +509,7 @@ async def download_status(username: str, id: str) -> str:
 
 
 @mcp.tool(
+    annotations=STOPS,
     description=(
         "Cancel a download in progress. Always available, even when downloads "
         "are disabled — stopping a transfer only ever reduces activity."

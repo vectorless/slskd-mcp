@@ -56,6 +56,18 @@ FLAC" is the question that usually matters.
 | `download` | **write** | queue a transfer — **disabled by default** |
 | `cancel_download` | **write** | stop a transfer — always available, see below |
 
+### Tool annotations
+
+Every tool declares MCP `ToolAnnotations`, so a client can tell looking from touching
+without being told. Without them a client must assume the worst and prompt before each
+call, which makes routine searching unusable.
+
+Ten tools are `readOnlyHint`. `wishlist_add` and `wishlist_remove` write to a local file
+and say so. `wishlist_check` is *not* read-only despite mostly searching — it records what
+it reported, which is the whole point of it. `download` and `cancel_download` are writes.
+`openWorldHint` is true on anything touching the network: these are strangers' machines,
+not a closed set.
+
 ### Downloads are gated on purpose
 
 `download` writes files to disk and generates traffic on a P2P network under the operator's
